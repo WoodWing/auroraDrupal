@@ -25,8 +25,9 @@ define( 'LOGPATH'  , dirname(__FILE__) . '/wwlog/'); // including ending '/'
 
 // if you want to run from local server, specify the URL to the 
 // AWSSNS subserver, leave empty to disable subserver functionality
-define( 'AWSSNSURL' , 'http://ec2-52-15-147-67.us-east-2.compute.amazonaws.com/subserver/subserver.php' );
-define( 'SUBKEY'	, 'wvr-localhost');
+// the SUBKEY is then used to keep track of which files where already downloaded
+define( 'AWSSNSURL' , '' );
+define( 'SUBKEY'	, '');
 
 
 // ----------------------
@@ -42,6 +43,10 @@ define ( 'DRUPAL_IFRAME_TYPE' , 'articleiframe');
 
 // the name of the 'non' iframe contentType
 define ( 'DRUPAL_ARTICLE_TYPE' , 'article');
+
+// the location where we are allowed to create data
+// relative to drupal root
+define ( 'DRUPAL_DATA_FOLDER'  , '/sites/default/files/'); // ending '/' required
 
 
 // --------------------------------------------------
@@ -312,8 +317,6 @@ function getFiles($allFiles = false)
 	print "Files loaded:" . count($files) . "<br>\n" ;
 	foreach ( $files as $name => $data )
 	{
-		//print("-------------<br>\n");
-		//print("Handling file:$name<br>\n");
 		MyLog("-------------");
 		MyLog("Handling file:$name");
 		MyLog("-------------");
@@ -338,39 +341,29 @@ function getFiles($allFiles = false)
 // then an article in wp is created, containing a iframe that points to the
 // article structure
 
-function upsertDrupalFolder( $data )
+function upsertDrupalFolder( $message )
 {
-	Global $base_url;
-
+	$aurora = New Aurora($message);
 	
-	$url = $data->url;
-	$ID  = $data->id;
-	MyLog ( "Loading data from:$url " );
-	//print print_r($data,1);
-	$zipdata = file_get_contents( $url);
-	// save zipfile to our tempfolder
-	$zipname = basename($url);
-	$dirname = basename($zipname,'.article');
-	MyLog ( "zipname:" . $zipname  );
-	file_put_contents( TEMPDIR . $zipname, $zipdata);
+	
+	// save to disk
+	$zipname = $aurora->getArticleZipName();
+	MyLog ("zipname:" . $zipname  );
+	// store the zipfile in or tempfolder
+	$aurora->getArticleZipToPath(TEMPDIR . $zipname);
+	
+	MyLog ('errors:' . print_r($aurora->getErrors (),1) );
 	
 	// prepare the wp-side
-	$upload_dir =  '/sites/default/files/';
-	
-	//MyLog ( print_r($upload_dir,1));
 	$articleDirName =  $ID . '-' . $dirname;
-	$articleDir = DRUPAL_DIR . $upload_dir . $articleDirName;
-	$articleUrl = MY_OWN_URL . $upload_dir . $articleDirName . '/output.html';
-	
-	//print "Dir:" . $articleDir . EOL;
-	//print "URL:" . $articleUrl . EOL;
-	
+	$articleDir = DRUPAL_DIR . DRUPAL_DATA_FOLDER . $articleDirName;
+	$articleUrl = MY_OWN_URL . DRUPAL_DATA_FOLDER . $articleDirName . '/output.html';
 	
 	if ( ! file_exists($articleDir) )
 	{
 		MyLog ( "Creating folder [$articleDir]");
 		if ( mkdir( $articleDir ) ){
-			chmod($articleDir, 0755);
+			 chmod( $articleDir, 0755);
 		}	
 		else
 		{
@@ -382,19 +375,19 @@ function upsertDrupalFolder( $data )
 	// now unzip the zipfile to our folder
 	$zip = new ZipArchive;
 	if ($zip->open(TEMPDIR . $zipname) === TRUE) {
+		
 		MyLog ( "Extracting zipfile to [" .$articleDir."]");
     	$zip->extractTo($articleDir);
 		$zip->close();
 		
-		MyLog ( "doing our drupal thing:" . $data->name );
+		$DrupalNodeName = $aurora->getArticleName() . ' (iframe)'; 
+		MyLog ( "doing our drupal thing:" . $DrupalNodeName );
 		
 		// see if we can find this node
 		$nids = \Drupal::entityQuery('node')
          ->condition('type', DRUPAL_IFRAME_TYPE, '=')
-         ->condition('title', $data->name, '=')
+         ->condition('title', $DrupalNodeName, '=')
          ->execute();
-		
-		//print "nids:" . print_r($nids,1) . EOL;
 		
 		//stupid loop, to get key => val
 		$nodeID = 0;
@@ -403,17 +396,10 @@ function upsertDrupalFolder( $data )
 			break;
 		}
 			
-		
-		
-		if ( count($nids)>0){
+		if ( $nodeID > 0 ){
 			MyLog ( "Found existing article with ID[".$nodeID . '], update url with new timestamp');
-				
 			$node = \Drupal\node\Entity\Node::load($nodeID);
 			$node->field_iframe = $articleUrl . '?time=' . time();
-			
-			//node_delete($nodeID);
-			//$node->title = $node->title . '1';
-			//$node->author = 'wvr';
 			$node->save();
 				
 		}
@@ -422,17 +408,13 @@ function upsertDrupalFolder( $data )
 			MyLog ( "no existing article with name[".$data->name  . '], perform create');
 			$drupalNode= Node::create([
 								'type'        => DRUPAL_IFRAME_TYPE,
-								'title'       =>  $data->name ,
-								//'body'			=> '<h1>hello</h1>',
+								'title'       =>  $DrupalNodeName ,
 								'field_iframe' => $articleUrl,
 								]); // Set some default values.
 			$drupalNode->save();
 		}
 					
-		
 		MyLog ( 'Created or updated post with ID:' . $post_id );
-		
-		
 	}	
 	else
 	{
@@ -449,34 +431,33 @@ function upsertDrupalFolder( $data )
 // and store the article as new article
 // this will cause some display problems bcause of javasript and styling not working correctly
 
-function upsertDrupalArticle( $data )
+function upsertDrupalArticle( $message )
 {
-	$url = $data->url;
-	$ID  = $data->id;
-	MyLog ( "Loading data from:$url ");
-	$zipdata = file_get_contents( $url);
+	$aurora = New Aurora($message);
+	
 	
 	// save to disk
-	$zipname = basename($url);
+	$zipname = $aurora->getArticleZipName();
 	MyLog ("zipname:" . $zipname  );
-	file_put_contents( TEMPDIR . $zipname, $zipdata);
+	// store the zipfile in or tempfolder
+	$aurora->getArticleZipToPath(TEMPDIR . $zipname);
 	
-	// prepare the wp-side
-	$upload_dir =  '/sites/default/files/';
+	MyLog ('errors:' . print_r($aurora->getErrors (),1) );
+		
+	// prepare the Drupal-side
 	$dirname = basename($zipname,'.article');
-	$articleDirName =  'native-' . $ID . '-' . $dirname;
-	
-	//MyLog ( print_r($upload_dir,1));
-	
-	$articleDir = DRUPAL_DIR . $upload_dir . $articleDirName;
-	$articleUrl = MY_OWN_URL . $upload_dir . $articleDirName;
+		
+	$articleDirName =  'native-' . $aurora->getArticleID() . '-' . $dirname;
+	$articleDir = DRUPAL_DIR . DRUPAL_DATA_FOLDER . $articleDirName;
+	$articleUrl = MY_OWN_URL . DRUPAL_DATA_FOLDER . $articleDirName;
+	MyLog ('articleDir:' . $articleDir );
 
-	
+	// check for the folder where we will unzip
 	if ( ! file_exists($articleDir) )
 	{
 		MyLog ( "Creating folder [$articleDir]");
 		if ( mkdir( $articleDir ) ){
-			chmod($articleDir, 0755);
+			 chmod( $articleDir, 0755);
 		}	
 		else
 		{
@@ -487,56 +468,70 @@ function upsertDrupalArticle( $data )
 	
 	$zip = new ZipArchive;
 	if ($zip->open(TEMPDIR . $zipname) === TRUE) {
+		MyLog("Unzipping to [$articleDir]");
     	$zip->extractTo($articleDir);
 		$zip->close();
 		
+		// get the data in memory
+		//$metadata = $aurora->getArticleMetadata();
+		//$json = $aurora->getArticleJSON();
+	
+		// and/or write to file to the articleDir
+		MyLog ( "Get metadata");
+		file_put_contents($articleDir . '/articlemetadata.txt', $aurora->getArticleMetadata());
+		MyLog ( "Get json");
+		file_put_contents($articleDir . '/articlejson.txt', $aurora->getArticleJSON());
+		MyLog ('errors:' . print_r($aurora->getErrors (),1) );
+		
 		// parse the content in the temp folder
-		$images = getImagesFromPath( $articleDir . '/img');
+		
 		$articleHTML = file_get_contents($articleDir .'/output.html');
 		
-		
-		
 		// upload the template/design.css
-		$urlname = $articleUrl . '/template/design.css';
-		// update the article with the new design.css location
-		$articleHTML = str_replace ("template/design.css",  $urlname ,$articleHTML);
+		$cssUrl = $articleUrl . '/template/design.css';
+		$articleHTML = str_replace ("template/design.css",  $cssUrl ,$articleHTML);
 		
 		// upload the template/vendor.js
-		$urlname = $articleUrl . '/template/vendor.js';
-		$articleHTML = str_replace ("template/vendor.js",  $urlname ,$articleHTML);
+		$vendorJsUrl = $articleUrl . '/template/vendor.js';
+		$articleHTML = str_replace ("template/vendor.js",  $vendorJsUrl ,$articleHTML);
+	
+	
 		
+		// handle the images
+		$images = getImagesFromPath( $articleDir . '/img');
 		MyLog('images:' . print_r($images,1));
-		//$articleDir . '/img';
+		
+		
 		// upload the images and replace the links in the article
 		foreach( $images as $image )
 		{
-			// check if file exists
-			//$fname = $ID . '-' . basename($image);
-			//MyLog('upload_dir :' . print_r($upload_dir,1) );
-			//$uploadFile = $upload_dir . $articleDirName . '/' . $fname;
-			
 			$urlname = $articleUrl . '/img/'.basename($image);
 			//Update the image url in the html
        		MyLog ("Replacing [" .  basename($image) . "]  with [" . $urlname . "]" );
-       		// update the article with the new image location, this will 
-       		// need to be a drupal upload.
+       		// update the article with the new image location,  
+       		// this will need to be a drupal upload.
        		$articleHTML = str_replace ("&quot;img/" . basename($image) . "&quot;", "'". $urlname . "'",$articleHTML);
-	   		// diverse between aurora and inception?	
+	   		// diverense between aurora and inception?	
 	   		//$articleHTML = str_replace ("img/" . basename($image) . "", "". $urlname . "",$articleHTML);
 	   		MyLog('--');
-        	
 		}
 		
-		file_put_contents( TEMPDIR . '/article.txt', $articleHTML );
-		MyLog ( "articleHTML:" . $articleHTML );
+		// store modified article back to disk
+		file_put_contents( $articleDir . '/article.txt', $articleHTML );
+		//MyLog ( "articleHTML:" . $articleHTML );
 
+		// -----------------------------
+		// time to do some drupal logic
+		// -----------------------------
+
+		$DrupalNodeName = $aurora->getArticleName(); 
 		
-		MyLog ( "doing our drupal thing:" . $data->name );
+		MyLog ( "doing our drupal thing:" . $DrupalNodeName );
 		
 		// see if we can find this node
 		$nids = \Drupal::entityQuery('node')
          ->condition('type', DRUPAL_ARTICLE_TYPE, '=')
-         ->condition('title', $data->name, '=')
+         ->condition('title',$DrupalNodeName , '=')
          ->execute();
 		
 		//print "nids:" . print_r($nids,1) . EOL;
@@ -547,23 +542,29 @@ function upsertDrupalArticle( $data )
 			$nodeID = $nid;
 			break;
 		}
-			
+		
+		//Update the story html to load the css	
+		$completeHTML = "<div class='inceptionBody inceptionWordpress'>" .
+                 "<link rel='stylesheet' href='" . $cssUrl . "'/>" .
+                 "<script src='" . $vendorJsUrl . "'></script>" . 
+                 "<div class='articleContainer'>" .
+                    $articleHTML .
+                 "</div>" .
+              "</div>";
 		
 		
 		if ( count($nids)>0){
-			MyLog ( "Found existing article with ID[".$nodeID . '], update body');
+			MyLog ( "Found existing article with ID[" . $nodeID . '], update body');
 				
-			$node = \Drupal\node\Entity\Node::load($nodeID);
-			$node->field_iframe = $articleUrl . '?time=' . time();
-			$node->body = array(
-				'value' => $articleHTML,
-				'format' => 'basic_html',
+			$drupalNode = \Drupal\node\Entity\Node::load($nodeID);
+			//$drupalNode->field_iframe = $articleUrl . '?time=' . time();
+			$drupalNode->body = array(
+				'value' => $completeHTML,
+				'format' => 'full_html',
 				);
 			
-			//node_delete($nodeID);
-			//$node->title = $node->title . '1';
-			//$node->author = 'wvr';
-			$node->save();
+			$drupalNode->author = 'wvr';
+			$drupalNode->save();
 				
 		}
 		else
@@ -571,13 +572,14 @@ function upsertDrupalArticle( $data )
 			MyLog ( "no existing article with name[".$data->name  . '], perform create');
 			$drupalNode= Node::create([
 								'type'        => DRUPAL_ARTICLE_TYPE,
-								'title'       =>  $data->name ,
+								'title'       => $DrupalNodeName ,
 								'body'		  => $node->body = array(
-													'value' => $articleHTML,
-													'format' => 'basic_html',
+													'value' => $completeHTML,
+													'format' => 'full_html',
 													),
-								//'field_iframe' => $articleUrl,
+								
 								]); // Set some default values.
+			$drupalNode->author = 'wvr';					
 			$drupalNode->save();
 		}
 
@@ -681,9 +683,7 @@ function getRealIpAddr()
     {
       $ip=$_SERVER['REMOTE_ADDR'];
     }
-    
-    
-    if ( $ip == '::1' ) { $ip = 'localhost';}
+	if ( $ip == '::1' ) { $ip = 'localhost';}
     return $ip;
 }
 
@@ -706,7 +706,6 @@ function getLogPath()
      mkdir($logfolder,0777);
      chmod($logfolder,0777);
    } 
-      
       
    // add IPAdres if required
    if ( defined ('LOGPATHWITHIP') &&
@@ -751,9 +750,6 @@ function mustLog()
      {
        $do_log = true;
      }  
-   
-    
-   
    }
    else
    {
@@ -798,8 +794,6 @@ function MyLog( $logline , $toBrowser = false)
       $logfolder = getLogPath();
       $logname = $LOGNAME;
       
-      
-                                        
       if ( $currentCommand != '' &&
            $logTimeStamp   != '')
       {
@@ -872,3 +866,152 @@ function encodePath( $path2encode )
   return $newPath;
 }
 
+
+
+
+/* - Aurora -
+
+	 functions handling the Aurora specific data
+*/	 
+
+class Aurora {
+	
+	/* structure of the message being received from AWS
+   [id] => 146
+    [name] => da_1-iframe
+    [url] => https://prod-published-articles-bucket-eu-west-1.s3.amazonaws.com/146/c959e74d-8d52-4adc-9599-62415e0861fa/da-1-iframe.article
+    [metadataUrl] => https://prod-published-articles-bucket-eu-west-1.s3.amazonaws.com/146/c959e74d-8d52-4adc-9599-62415e0861fa/metadata.json
+    [articleJsonUrl] => https://prod-published-articles-bucket-eu-west-1.s3.amazonaws.com/146/c959e74d-8d52-4adc-9599-62415e0861fa/article.json
+    [tenantId] => f21d1f27-68bc-f4cc-8fba-b91ab5d99c1c
+    [brand] => 1
+	*/
+	
+	private $_awsMessage = null;
+	private $_errors = array();
+	
+	public function __construct( $message = null)
+    {
+        if($message){
+            $this->_awsMessage = $message;
+            $this->_errors = array();
+        }
+    }
+	
+	
+	
+	public function getArticleID()
+	{
+		 if($this->_awsMessage){
+			 return $this->_awsMessage->id;
+		 }
+		 
+		 return false;	 
+
+	}
+
+	
+	public function getArticleName()
+	{
+		if($this->_awsMessage){
+			 return $this->_awsMessage->name;
+		 }
+		 
+		 return false;	
+	}
+	
+	public function getArticleZipName()
+	{
+		if($this->_awsMessage){
+			 try {
+			 	$zipname = basename($this->_awsMessage->url);
+			 } 	catch( Exception $e )
+			 {
+				 $this->_errors[] = "Problem loading article zipped data, error: $e";
+			 }
+			 return $zipname;
+		 }
+		 
+		 return false;
+	}
+	
+	//
+	// get the zipfile from the path specified in the message
+	// and download it to the path specified
+	//
+	public function getArticleZipToPath($zippath)
+	{
+		if($this->_awsMessage){
+			 try {
+			 	$zipdata = file_get_contents($this->_awsMessage->url);
+			 	file_put_contents( $zippath, $zipdata);
+			 } 	catch( Exception $e )
+			 {
+				 $this->_errors[] = "Problem loading article zipped data, error: $e";
+			 }
+			 return $zipdata;
+		 }
+		 
+		 return false;
+	}
+	
+	//
+	// get the zipfile as raw data
+	// 
+	public function getArticleZipData()
+	{
+		if($this->_awsMessage){
+			 try {
+			 	$zipdata = file_get_contents($this->_awsMessage->url);
+			 } 	catch( Exception $e )
+			 {
+				 $this->_errors[] = "Problem loading article zipped data, error: $e";
+			 }
+			 return $zipdata;
+		 }
+		 
+		 return false;
+	}
+	
+		
+	public function getArticleMetadata()
+	{
+		 if($this->_awsMessage){
+			 try {
+			 	$metadata = file_get_contents($this->_awsMessage->metadataUrl);
+			 } 	catch( Exception $e )
+			 {
+				 $this->_errors[] = "Problem loading article metadata, error: $e";
+			 }
+			 return json_decode($metadata);
+		 }
+		 
+		 return false;
+	}
+	
+	public function getArticleJSON()
+	{
+		 if($this->_awsMessage){
+			 try {
+			 	$articleJSON = file_get_contents($this->_awsMessage->articleJsonUrl);
+			 } 	catch( Exception $e )
+			 {
+				 $this->_errors[] = "Problem loading article JSON, error: $e";
+			 }
+			 return json_decode($articleJSON);
+		 }
+		 
+		 return false;
+	}
+	
+	
+	
+	public function getErrors ()
+	{
+		if($this->_errors){
+			return $this->_errors;
+		}
+		return false;
+		
+	}
+	
+}
