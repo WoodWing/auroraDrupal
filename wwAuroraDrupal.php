@@ -2,7 +2,7 @@
 
 // 
 // -wwAuroraDrupal-
-// version 0.1
+// version 0.2
 // 
 // interface to receive or get WoodWing Aurora articles and store them in Drupal
 //
@@ -33,7 +33,7 @@ define( 'SUBKEY'	, '');
 // ----------------------
 // Drupal settings
 // ----------------------
-define ( 'MY_OWN_URL','http://ec2-52-15-147-67.us-east-2.compute.amazonaws.com/drupal/');
+define ( 'MY_OWN_URL','http://127.0.0.1:8888/');
 
 // the name of the Iframe module used
 define ( 'DRUPAL_IFRAME_MODULE','iframe');
@@ -121,7 +121,7 @@ $kernel->terminate($request, $response);
 
  mode-2)
   if postdata is received, it is expected to be in the AWS-SNS message format
-  the sns message data will be used to update wordpress.
+  the sns message data will be used to update Drupal.
 */
 
 // main check to see if any postdata is available
@@ -335,10 +335,10 @@ function getFiles($allFiles = false)
 }
 
 
-// this function is an alternative for upsertWPArticles
+// this function is an alternative for upsertDrupalArticles
 // in this case the inception article-structure is uploaded to 
-// the wordpress upload folder,
-// then an article in wp is created, containing a iframe that points to the
+// the Drupal upload folder,
+// then an article in Drupal is created, containing a iframe that points to the
 // article structure
 
 function upsertDrupalFolder( $message )
@@ -354,7 +354,7 @@ function upsertDrupalFolder( $message )
 	
 	MyLog ('errors:' . print_r($aurora->getErrors (),1) );
 	
-	// prepare the wp-side
+	// prepare the drupal-side
 	$articleDirName =  $ID . '-' . $dirname;
 	$articleDir = DRUPAL_DIR . DRUPAL_DATA_FOLDER . $articleDirName;
 	$articleUrl = MY_OWN_URL . DRUPAL_DATA_FOLDER . $articleDirName . '/output.html';
@@ -405,7 +405,7 @@ function upsertDrupalFolder( $message )
 		}
 		else
 		{
-			MyLog ( "no existing article with name[".$data->name  . '], perform create');
+			MyLog ( "no existing article with name[" . $DrupalNodeName  . '], perform create');
 			$drupalNode= Node::create([
 								'type'        => DRUPAL_IFRAME_TYPE,
 								'title'       =>  $DrupalNodeName ,
@@ -501,11 +501,12 @@ function upsertDrupalArticle( $message )
 		$images = getImagesFromPath( $articleDir . '/img');
 		MyLog('images:' . print_r($images,1));
 		
-		
+		$leadimage = null;
 		// upload the images and replace the links in the article
 		foreach( $images as $image )
 		{
 			$urlname = $articleUrl . '/img/'.basename($image);
+			if ($leadimage == null) $leadimage = $image;
 			//Update the image url in the html
        		MyLog ("Replacing [" .  basename($image) . "]  with [" . $urlname . "]" );
        		// update the article with the new image location,  
@@ -544,7 +545,7 @@ function upsertDrupalArticle( $message )
 		}
 		
 		//Update the story html to load the css	
-		$completeHTML = "<div class='inceptionBody inceptionWordpress'>" .
+		$completeHTML = "<div class='inceptionBody inceptionDrupal'>" .
                  "<link rel='stylesheet' href='" . $cssUrl . "'/>" .
                  "<script src='" . $vendorJsUrl . "'></script>" . 
                  "<div class='articleContainer'>" .
@@ -561,15 +562,11 @@ function upsertDrupalArticle( $message )
 			$drupalNode->body = array(
 				'value' => $completeHTML,
 				'format' => 'full_html',
-				);
-			
-			$drupalNode->author = 'wvr';
-			$drupalNode->save();
-				
+				);	
 		}
 		else
 		{
-			MyLog ( "no existing article with name[".$data->name  . '], perform create');
+			MyLog ( "no existing article with name[". $DrupalNodeName  . '], perform create');
 			$drupalNode= Node::create([
 								'type'        => DRUPAL_ARTICLE_TYPE,
 								'title'       => $DrupalNodeName ,
@@ -579,10 +576,32 @@ function upsertDrupalArticle( $message )
 													),
 								
 								]); // Set some default values.
-			$drupalNode->author = 'wvr';					
-			$drupalNode->save();
+			$drupalNode->author = 'woodwing';	
 		}
 
+		if ($leadimage != null) {
+
+			MyLog ("Leadimage: " .  $leadimage);
+
+			$image_data = file_get_contents($leadimage);
+			
+			// The last parameter can be omitted, FILE_EXISTS_RENAME is the default.
+			$datapath= 'public://' . basename($leadimage);
+			MyLog ("Save data: " .  $datapath);
+			$file_object = file_save_data($image_data, $datapath, FILE_EXISTS_REPLACE);
+
+			if ($file_object) {
+				$drupalNode->set('field_image', [
+					'target_id' => $file_object->id(),
+					'alt' => $DrupalNodeName,
+				]);
+			} else {
+				MyLog("error saving leadimage file");
+			}
+		}
+
+		$drupalNode->author = 'woodwing';
+		$drupalNode->save();
 		
 		
 		if (file_exists(TEMPDIR . $dirname)) { deleteDir (TEMPDIR . $dirname); }
@@ -874,7 +893,7 @@ function encodePath( $path2encode )
 	 functions handling the Aurora specific data
 */	 
 
-class Aurora {
+class Aurora { 
 	
 	/* structure of the message being received from AWS
    [id] => 146
