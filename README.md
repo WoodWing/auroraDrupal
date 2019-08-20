@@ -50,10 +50,10 @@ The configuration needs to be done in the file ``wwAuroraDrupal.php
 ##### (optional) URL to SubServer
 This is only required in this specific case:
 
-If your Drupal server is not reachable from the outside world then the Aurora publish process can not push the article-packet to your WP.
+If your Drupal server is not reachable from the outside world then the Aurora publish process can not push the article-packet to your Drupal.
 To work around this, a 2-step process can be setup using a SubServer.
 In this case the SubServer is running in the cloud and will receive the published articles. 
-Your local WP can then 'pull' the published articles from this SubServer.
+Your local Drupal can then 'pull' the published articles from this SubServer.
 
 To make this work, the URL to the SubServer needs to be specified.
 
@@ -115,9 +115,9 @@ In case you want to put the webCMS in control of the look and feel of the publis
 
 - mapping article components to cms-content structure
 - mapping inception widgets to cms widgets
-- uploading images to the correct WP structure
-- uploading videos to the correct WP structure
-- translate element/component names to WP-styling names
+- uploading images to the correct Drupal structure
+- uploading videos to the correct Drupal structure
+- translate element/component names to Drupal-styling names
 
 Based on the above (possible incomplete) list you can understand that this solution will not be available out-of-the-box. This solution will always be a fine-tuned connection between the possibilities of the CMS, custom styling in Aurora and also some PHP coding to make mapping/conversions.
 
