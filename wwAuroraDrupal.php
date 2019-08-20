@@ -121,7 +121,7 @@ $kernel->terminate($request, $response);
 
  mode-2)
   if postdata is received, it is expected to be in the AWS-SNS message format
-  the sns message data will be used to update wordpress.
+  the sns message data will be used to update drupal.
 */
 
 // main check to see if any postdata is available
@@ -337,7 +337,7 @@ function getFiles($allFiles = false)
 
 // this function is an alternative for upsertWPArticles
 // in this case the inception article-structure is uploaded to 
-// the wordpress upload folder,
+// the drupal upload folder,
 // then an article in wp is created, containing a iframe that points to the
 // article structure
 
@@ -544,7 +544,7 @@ function upsertDrupalArticle( $message )
 		}
 		
 		//Update the story html to load the css	
-		$completeHTML = "<div class='inceptionBody inceptionWordpress'>" .
+		$completeHTML = "<div class='inceptionBody inceptiondrupal'>" .
                  "<link rel='stylesheet' href='" . $cssUrl . "'/>" .
                  "<script src='" . $vendorJsUrl . "'></script>" . 
                  "<div class='articleContainer'>" .
